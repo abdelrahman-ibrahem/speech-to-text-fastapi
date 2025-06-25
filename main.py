@@ -1,31 +1,39 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 import whisper
-from util import load_audio
+import numpy as np
+import soundfile as sf
+import io
+from tempfile import NamedTemporaryFile
+import os
 
 app = FastAPI()
-voice_to_text_model = whisper.load_model("small", device="cpu")  # "tiny", "base", "small", "medium" models are free
+voice_to_text_model = whisper.load_model("small", device='cpu')
 
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
-
-
-def voice_to_text_audio_file(uploaded_file):
-    result = voice_to_text_model.transcribe(uploaded_file, fp16=False)
-    return result["text"]
-
+def load_audio(file_bytes):
+    # Load audio and convert to Whisper's required format
+    audio, sr = sf.read(io.BytesIO(file_bytes))
+    
+    # Convert to mono if stereo
+    if len(audio.shape) > 1:
+        audio = np.mean(audio, axis=1)
+    
+    # Resample to 16kHz if needed
+    if sr != 16000:
+        import librosa
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
+    
+    return audio.astype(np.float32)
 
 @app.post("/voice")
 async def upload_voice(file: UploadFile = File(...)):
     try:
+
         audio_bytes = await file.read()
         audio_numpy = load_audio(audio_bytes)
-
-        file_content = voice_to_text_audio_file(audio_numpy)
-
-        return {"message": file_content}
+        result = voice_to_text_model.transcribe(audio_numpy, fp16=False)
+        
+        return {"text": result["text"]}
     except Exception as e:
         return JSONResponse(
             status_code=500,
